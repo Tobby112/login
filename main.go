@@ -28,7 +28,7 @@ func main() {
 		return
 	}
 	if !success {
-		fmt.Println("login failed")
+		fmt.Println(email, "login failed")
 		return
 	}
 	fmt.Println(email, "login successfully")
