@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/parnurzeal/gorequest"
 )
@@ -36,12 +37,14 @@ var (
 type classReservation struct {
 	Email     string
 	Date      string // classDateFormat
+	Time      string
 	NameID    string // cid1764796689
 	TeacherID string // bio100000157
 }
 
 func main() {
 	r := gin.Default()
+	r.Use(cors.Default())
 	r.GET("/classes", func(c *gin.Context) {
 		date, ok := c.GetQuery("date")
 		if !ok {
@@ -80,7 +83,7 @@ func main() {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		if err := u.reserve(r.Date, r.NameID, r.TeacherID); err != nil {
+		if err := u.reserve(r.Date, r.Time, r.NameID, r.TeacherID); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -153,11 +156,18 @@ func (u *user) loginData() string {
 	return string(loginDataBytes)
 }
 
-func (u *user) reserve(date, nameID, teacherID string) error {
-	// TODO get classID by date, nameID and teacherID
+func (u *user) reserve(date, time, nameID, teacherID string) error {
+	cs, err := getClasses(date)
+	if err != nil {
+		return err
+	}
+	c, found := classes(cs).find(date, time, nameID, teacherID)
+	if !found {
+		return fmt.Errorf("class of date:%s time:%s, nameID:%s, teacherID:%s not fonud", date, time, nameID, teacherID)
+	}
 	_, _, errs := u.request.Post(mindbody+"/ASP/res_deb.asp").
 		Query(studioID).
-		Query("classID="+"").
+		Query("classID="+c.ID).
 		Query("classDate="+date).
 		Query("pmtRefNo="+u.confidence.pmtRefNo).
 		Query("courseid=&clsLoc=1&typeGroupID=1&recurring=false&wlID=").
@@ -190,6 +200,7 @@ func initSession() (*gorequest.SuperAgent, error) {
 // NOTE unique key is `Date+NameID+TeacherID`
 type class struct {
 	Index     int
+	ID        string
 	Date      string // classDateFormat
 	Time      string
 	Name      string
@@ -198,6 +209,20 @@ type class struct {
 	TeacherID string // bio100000157
 	Location  string
 	Duration  string
+}
+
+type classes []*class
+
+func (cs classes) find(date, time, nameID, teacherID string) (*class, bool) {
+	for _, c := range cs {
+		if c.Date == date &&
+			c.Time == time &&
+			c.NameID == nameID &&
+			c.TeacherID == teacherID {
+			return c, true
+		}
+	}
+	return nil, false
 }
 
 func getClasses(date string) ([]*class, error) {
@@ -244,8 +269,18 @@ func getClasses(date string) ([]*class, error) {
 				switch indextd {
 				case 0: // time
 					c.Time = d
-				case 1: // reserved/open count
-					// TODO get classID
+				case 1: // sign up button and reserved/open count
+					onclick := tablecell.Find("input").AttrOr("onclick", "")
+					i := strings.Index(onclick, "/ASP/res_a.asp?")
+					if i == -1 { // not found resa
+						break
+					}
+					queries, _ := url.ParseQuery(onclick[i:])
+					classIDs, ok := queries["classId"]
+					if !ok {
+						break
+					}
+					c.ID = classIDs[0]
 				case 2: // class desc
 					c.Name = d
 					c.NameID = tablecell.Find("a").AttrOr("name", "")
