@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/gin-contrib/cors"
@@ -265,7 +266,7 @@ func getClasses(date string) ([]*class, error) {
 				Index: len(classes),
 			}
 			rowhtml.Find("td").Each(func(indextd int, tablecell *goquery.Selection) {
-				d := strings.TrimSpace(html.UnescapeString(tablecell.Text()))
+				d := spaceMap((html.UnescapeString(tablecell.Text())))
 				switch indextd {
 				case 0: // time
 					c.Time = d
@@ -299,6 +300,16 @@ func getClasses(date string) ([]*class, error) {
 		})
 	})
 	return classes, nil
+}
+
+// cutout all spaces in the string
+func spaceMap(str string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, str)
 }
 
 func printCookies(r *gorequest.SuperAgent) {
