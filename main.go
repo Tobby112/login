@@ -3,72 +3,126 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"html"
+	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
+	"github.com/PuerkitoBio/goquery"
+	"github.com/gin-gonic/gin"
 	"github.com/parnurzeal/gorequest"
 )
 
 const (
-	userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36"
+	userAgent       = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36"
+	mindbody        = "https://clients.mindbodyonline.com"
+	site            = 831
+	classDateFormat = "01/02/2006"
 )
 
 var (
 	logCookies = false
+	// query string of studio ID
+	studioID      = fmt.Sprintf("studioid=%v", site)
+	confidenceMap = map[string]confidence{
+		"example@gmail.com": {
+			"password",
+			"pmtRefNo",
+		},
+	}
 )
 
+type classReservation struct {
+	Email     string
+	Date      string // classDateFormat
+	NameID    string // cid1764796689
+	TeacherID string // bio100000157
+}
+
 func main() {
-	email := ""
-	pass := ""
-	site := 100
-	u := newUser(email, pass, site)
-	success, err := u.login()
-	if err != nil {
-		fmt.Println("login error:", err)
-		return
-	}
-	if !success {
-		fmt.Println(email, "login failed")
-		return
-	}
-	fmt.Println(email, "login successfully")
+	r := gin.Default()
+	r.GET("/classes", func(c *gin.Context) {
+		date, ok := c.GetQuery("date")
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "date not found"})
+			return
+		}
+		_, err := time.Parse(classDateFormat, date)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		classes, err := getClasses(date)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, classes)
+	})
+	r.POST("/classes", func(c *gin.Context) {
+		r := classReservation{}
+		if err := c.Bind(&r); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		u, err := newUser(r.Email)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		success, err := u.login()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !success {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if err := u.reserve(r.Date, r.NameID, r.TeacherID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+	})
+
+	r.Run("127.0.0.1:8080")
 }
 
 type user struct {
-	request *gorequest.SuperAgent
-	email   string
-	pass    string
-	site    int
+	request    *gorequest.SuperAgent
+	email      string
+	confidence confidence
 }
 
-func newUser(email, pass string, site int) *user {
-	return &user{
-		request: gorequest.New(),
-		email:   email,
-		pass:    pass,
-		site:    site,
+type confidence struct {
+	pass     string
+	pmtRefNo string
+}
+
+func newUser(email string) (*user, error) {
+	c, ok := confidenceMap[email]
+	if !ok {
+		return nil, fmt.Errorf("user:%v not found", email)
 	}
+
+	r, err := initSession()
+	if err != nil {
+		return nil, err
+	}
+
+	return &user{
+		request:    r,
+		email:      email,
+		confidence: c,
+	}, nil
 }
 
 func (u *user) login() (success bool, err error) {
-	url := "https://clients.mindbodyonline.com"
-	studioid := fmt.Sprintf("studioid=%v", u.site)
-
-	// init session
-	_, _, errs := u.request.Get(url+"/ASP/home.asp").
-		Query(studioid).
-		Set("Accept", "application/json").
-		Set("Content-Type", "application/json").
-		Set("User-Agent", userAgent).
-		End()
-	if errs != nil {
-		return false, errs[0]
-	}
-	printCookies(u.request)
-
 	// login
-	_, loginBody, errs := u.request.Post(url+"/Login").
-		Query(studioid).
+	_, loginBody, errs := u.request.Post(mindbody+"/Login").
+		Query(studioID).
 		Query("isLibAsync=true").
 		Query("isJson=true").
 		Set("User-Agent", userAgent).
@@ -78,7 +132,6 @@ func (u *user) login() (success bool, err error) {
 	if errs != nil {
 		return false, errs[0]
 	}
-	printCookies(u.request)
 
 	// parse login response
 	loginResMap := map[string]interface{}{}
@@ -93,11 +146,124 @@ func (u *user) loginData() string {
 		"date":                date,
 		"classid":             "0",
 		"requiredtxtUserName": u.email,
-		"requiredtxtPassword": u.pass,
+		"requiredtxtPassword": u.confidence.pass,
 	}
 	loginDataBytes, _ := json.Marshal(loginDataMap)
 	// fmt.Println("login data:", string(loginDataBytes))
 	return string(loginDataBytes)
+}
+
+func (u *user) reserve(date, nameID, teacherID string) error {
+	// TODO get classID by date, nameID and teacherID
+	_, _, errs := u.request.Post(mindbody+"/ASP/res_deb.asp").
+		Query(studioID).
+		Query("classID="+"").
+		Query("classDate="+date).
+		Query("pmtRefNo="+u.confidence.pmtRefNo).
+		Query("courseid=&clsLoc=1&typeGroupID=1&recurring=false&wlID=").
+		Set("Accept", "application/json").
+		Set("Content-Type", "application/json").
+		Set("User-Agent", userAgent).
+		Type("form").
+		Send("").
+		End()
+	if errs != nil {
+		return errs[0]
+	}
+	return nil
+}
+
+func initSession() (*gorequest.SuperAgent, error) {
+	r := gorequest.New()
+	_, _, errs := r.Get(mindbody+"/ASP/home.asp").
+		Query(studioID).
+		Set("Accept", "application/json").
+		Set("Content-Type", "application/json").
+		Set("User-Agent", userAgent).
+		End()
+	if errs != nil {
+		return nil, errs[0]
+	}
+	return r, nil
+}
+
+// NOTE unique key is `Date+NameID+TeacherID`
+type class struct {
+	Index     int
+	Date      string // classDateFormat
+	Time      string
+	Name      string
+	NameID    string // cid1764796689
+	Teacher   string
+	TeacherID string // bio100000157
+	Location  string
+	Duration  string
+}
+
+func getClasses(date string) ([]*class, error) {
+	r, err := initSession()
+	if err != nil {
+		fmt.Println("goquery.NewDocumentFromReader error:", err)
+		return nil, err
+	}
+
+	// get classes
+	_, body, errs := r.Get(mindbody+"/classic/mainclass").
+		Query(studioID).
+		Query("date="+date).
+		Query("tg=&vt=&lvl=&stype=&view=&trn=0&page=&catid=&prodid=&classid=0&prodGroupId=&sSU=&optForwardingLink=&qParam=&justloggedin=&nLgIn=&pMode=0&loc=1").
+		Set("Accept", "application/json").
+		Set("Content-Type", "application/json").
+		Set("User-Agent", userAgent).
+		End()
+	if errs != nil {
+		return nil, errs[0]
+	}
+	// parse classSchedule table in the html body to classes
+	classes := []*class{}
+	dom, err := goquery.NewDocumentFromReader(strings.NewReader(body))
+	if err != nil {
+		fmt.Println("goquery.NewDocumentFromReader error:", err)
+		return nil, err
+	}
+	// get schedule table
+	dom.Find("table#classSchedule-mainTable").Each(func(_ int, selection *goquery.Selection) {
+		// get table rows
+		selection.Find("tr").Each(func(indextr int, rowhtml *goquery.Selection) {
+			// skip idx-0:header and idx-1:date
+			if indextr < 2 {
+				return
+			}
+			// get all table data of a row
+			c := &class{
+				Date:  date,
+				Index: len(classes),
+			}
+			rowhtml.Find("td").Each(func(indextd int, tablecell *goquery.Selection) {
+				d := strings.TrimSpace(html.UnescapeString(tablecell.Text()))
+				switch indextd {
+				case 0: // time
+					c.Time = d
+				case 1: // reserved/open count
+					// TODO get classID
+				case 2: // class desc
+					c.Name = d
+					c.NameID = tablecell.Find("a").AttrOr("name", "")
+				case 3: // teacher
+					c.Teacher = d
+					c.TeacherID = tablecell.Find("a").AttrOr("name", "")
+				case 4: // assist
+				case 5: // location
+					c.Location = d
+				case 6: // duraction
+					c.Duration = d
+				}
+
+			})
+			classes = append(classes, c)
+		})
+	})
+	return classes, nil
 }
 
 func printCookies(r *gorequest.SuperAgent) {
