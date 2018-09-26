@@ -2,17 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
-	"html"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
-	"unicode"
 
-	"github.com/PuerkitoBio/goquery"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/parnurzeal/gorequest"
 )
 
@@ -35,6 +34,7 @@ var (
 	}
 )
 
+// parameter of POST /classes
 type classReservation struct {
 	Email     string
 	Date      string // classDateFormat
@@ -44,6 +44,8 @@ type classReservation struct {
 }
 
 func main() {
+	flag.Parse()
+	classService := New()
 	r := gin.Default()
 	r.Use(cors.Default())
 	r.GET("/classes", func(c *gin.Context) {
@@ -57,7 +59,7 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		classes, err := getClasses(date)
+		classes, err := classService.getClasses(date)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -70,28 +72,14 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		u, err := newUser(r.Email)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		success, err := u.login()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if !success {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-		if err := u.reserve(r.Date, r.Time, r.NameID, r.TeacherID); err != nil {
+		if err := classService.reserve(r.Email, r.Date, r.Time, r.NameID, r.TeacherID); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"success": true})
 	})
 
-	r.Run("127.0.0.1:8080")
+	r.Run("0.0.0.0:80")
 }
 
 type user struct {
@@ -157,19 +145,11 @@ func (u *user) loginData() string {
 	return string(loginDataBytes)
 }
 
-func (u *user) reserve(date, time, nameID, teacherID string) error {
-	cs, err := getClasses(date)
-	if err != nil {
-		return err
-	}
-	c, found := classes(cs).find(date, time, nameID, teacherID)
-	if !found {
-		return fmt.Errorf("class of date:%s time:%s, nameID:%s, teacherID:%s not fonud", date, time, nameID, teacherID)
-	}
-	_, _, errs := u.request.Post(mindbody+"/ASP/res_deb.asp").
+func (u *user) reserve(date, classID string) error {
+	resp, body, errs := u.request.Post(mindbody+"/ASP/res_deb.asp").
 		Query(studioID).
-		Query("classID="+c.ID).
 		Query("classDate="+date).
+		Query("classID="+classID).
 		Query("pmtRefNo="+u.confidence.pmtRefNo).
 		Query("courseid=&clsLoc=1&typeGroupID=1&recurring=false&wlID=").
 		Set("Accept", "application/json").
@@ -181,6 +161,14 @@ func (u *user) reserve(date, time, nameID, teacherID string) error {
 	if errs != nil {
 		return errs[0]
 	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("u.reserve falied status:%+v body:%+v", resp.Status, string(body))
+	}
+	cantReserveStr := "Scheduling is currently closed."
+	if strings.Contains(string(body), cantReserveStr) {
+		return fmt.Errorf("can't reserve now body:%+v", string(body))
+	}
+
 	return nil
 }
 
@@ -196,120 +184,6 @@ func initSession() (*gorequest.SuperAgent, error) {
 		return nil, errs[0]
 	}
 	return r, nil
-}
-
-// NOTE unique key is `Date+NameID+TeacherID`
-type class struct {
-	Index     int
-	ID        string
-	Date      string // classDateFormat
-	Time      string
-	Name      string
-	NameID    string // cid1764796689
-	Teacher   string
-	TeacherID string // bio100000157
-	Location  string
-	Duration  string
-}
-
-type classes []*class
-
-func (cs classes) find(date, time, nameID, teacherID string) (*class, bool) {
-	for _, c := range cs {
-		if c.Date == date &&
-			c.Time == time &&
-			c.NameID == nameID &&
-			c.TeacherID == teacherID {
-			return c, true
-		}
-	}
-	return nil, false
-}
-
-func getClasses(date string) ([]*class, error) {
-	r, err := initSession()
-	if err != nil {
-		fmt.Println("goquery.NewDocumentFromReader error:", err)
-		return nil, err
-	}
-
-	// get classes
-	_, body, errs := r.Get(mindbody+"/classic/mainclass").
-		Query(studioID).
-		Query("date="+date).
-		Query("tg=&vt=&lvl=&stype=&view=&trn=0&page=&catid=&prodid=&classid=0&prodGroupId=&sSU=&optForwardingLink=&qParam=&justloggedin=&nLgIn=&pMode=0&loc=1").
-		Set("Accept", "application/json").
-		Set("Content-Type", "application/json").
-		Set("User-Agent", userAgent).
-		End()
-	if errs != nil {
-		return nil, errs[0]
-	}
-	// parse classSchedule table in the html body to classes
-	classes := []*class{}
-	dom, err := goquery.NewDocumentFromReader(strings.NewReader(body))
-	if err != nil {
-		fmt.Println("goquery.NewDocumentFromReader error:", err)
-		return nil, err
-	}
-	// get schedule table
-	dom.Find("table#classSchedule-mainTable").Each(func(_ int, selection *goquery.Selection) {
-		// get table rows
-		selection.Find("tr").Each(func(indextr int, rowhtml *goquery.Selection) {
-			// skip idx-0:header and idx-1:date
-			if indextr < 2 {
-				return
-			}
-			// get all table data of a row
-			c := &class{
-				Date:  date,
-				Index: len(classes),
-			}
-			rowhtml.Find("td").Each(func(indextd int, tablecell *goquery.Selection) {
-				d := spaceMap((html.UnescapeString(tablecell.Text())))
-				switch indextd {
-				case 0: // time
-					c.Time = d
-				case 1: // sign up button and reserved/open count
-					onclick := tablecell.Find("input").AttrOr("onclick", "")
-					i := strings.Index(onclick, "/ASP/res_a.asp?")
-					if i == -1 { // not found resa
-						break
-					}
-					queries, _ := url.ParseQuery(onclick[i:])
-					classIDs, ok := queries["classId"]
-					if !ok {
-						break
-					}
-					c.ID = classIDs[0]
-				case 2: // class desc
-					c.Name = d
-					c.NameID = tablecell.Find("a").AttrOr("name", "")
-				case 3: // teacher
-					c.Teacher = d
-					c.TeacherID = tablecell.Find("a").AttrOr("name", "")
-				case 4: // assist
-				case 5: // location
-					c.Location = d
-				case 6: // duraction
-					c.Duration = d
-				}
-
-			})
-			classes = append(classes, c)
-		})
-	})
-	return classes, nil
-}
-
-// cutout all spaces in the string
-func spaceMap(str string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsSpace(r) {
-			return -1
-		}
-		return r
-	}, str)
 }
 
 func printCookies(r *gorequest.SuperAgent) {

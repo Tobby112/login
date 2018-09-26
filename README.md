@@ -1,9 +1,12 @@
 # Schedule
 Get class schedule and reserve class of mindbodyonline
-1. go get -u github.com/parnurzeal/gorequest  
+1. go get -u github.com/go-sql-driver/mysql  
+   go get -u github.com/parnurzeal/gorequest  
    go get -u github.com/gin-gonic/gin  
    go get github.com/gin-contrib/cors  
-   go get github.com/PuerkitoBio/goquery
+   go get github.com/PuerkitoBio/goquery  
+   go get github.com/jmoiron/sqlx
+   => should use govendor
 2. set `email`, `password` and `pmtRefNo` in main.go `configenceMap`
 ```
 confidenceMap = map[string]confidence{
@@ -13,15 +16,15 @@ confidenceMap = map[string]confidence{
 	},
 }
 ```
-3. go run main.go
+3. go run main.go -mysqlEndpoint="root:@tcp(127.0.0.1:3306)/class?charset=utf8mb4"
 * * *
 Get Class Schedule
 ```
-GET http://localhost:8080/classes?date=09/30/2018
+GET http://localhost:80/classes?date=09/30/2018
 ```
 Reserve a class
 ```
-POST http://localhost:8080/classes
+POST http://localhost:80/classes
 With JSON body
 {
 	"Email":"example@gmail.com",
