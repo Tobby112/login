@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"html"
+	"log"
 	"net/url"
 	"strings"
 	"time"
@@ -24,7 +25,7 @@ type impl struct {
 
 // new creates the class service
 func New() *impl {
-	fmt.Println("connecting mysql:", *mysqlEndpoint)
+	log.Println("connecting mysql:", *mysqlEndpoint)
 	db, err := sql.Open("mysql", *mysqlEndpoint)
 	if err != nil {
 		panic(err)
@@ -86,11 +87,15 @@ func reserver(im *impl) {
 		var err error
 		defer func() {
 			if err != nil {
-				fmt.Println("error", err)
+				log.Println("error", err)
 			}
 		}()
 		var u *user
 		u, err = newUser(email)
+		if err != nil {
+			return false
+		}
+
 		success, err := u.login()
 		if !success {
 			return false
@@ -101,7 +106,7 @@ func reserver(im *impl) {
 		}
 		return true
 	}
-	fmt.Println("start reserver")
+	log.Println("start reserver")
 	loc, _ := time.LoadLocation("Asia/Taipei")
 	ticker := time.NewTicker(2 * time.Second)
 	for range ticker.C {
@@ -118,23 +123,23 @@ func reserver(im *impl) {
 		// get class
 		cs, err := im.getClasses(date)
 		if err != nil {
-			fmt.Printf("im.getClasses date:%+v, error:%+v\n", date, err)
+			log.Printf("im.getClasses date:%+v, error:%+v\n", date, err)
 			continue
 		}
 
 		for _, r := range rs {
-			fmt.Println("processing reservation", r)
+			log.Println("processing reservation", r)
 			c, found := classes(cs).find(r.Date, r.Time, r.NameID, r.TeacherID)
 			if !found || c.ID == "" {
-				fmt.Printf("class of date:%s time:%s, nameID:%s, teacherID:%s not fonud\n", r.Date, r.Time, r.NameID, r.TeacherID)
+				log.Printf("class of date:%s time:%s, nameID:%s, teacherID:%s not fonud\n", r.Date, r.Time, r.NameID, r.TeacherID)
 				continue
 			}
 
 			if success := reserve(r.Email, r.Date, c.ID); success {
-				fmt.Println("reserve success", r)
+				log.Println("reserve success", r)
 				im.reserveDone(r.ID)
 			} else {
-				fmt.Println("reserve failed", r)
+				log.Println("reserve failed", r)
 			}
 		}
 	}
@@ -144,7 +149,7 @@ func (im *impl) getReservationsByDate(date string) ([]*Reservation, error) {
 	rs := []*Reservation{}
 	selectStmt := `SELECT id,email,date,time,nameID,teacherID,isDone FROM ClassReservation WHERE date=? AND isDone=? ORDER BY id asc`
 	if err := im.db.Select(&rs, selectStmt, date, false); err != nil {
-		fmt.Println("db.Select error", err, selectStmt, date)
+		log.Println("db.Select error", err, selectStmt, date)
 		return nil, err
 	}
 	return rs, nil
@@ -159,25 +164,25 @@ func (im *impl) reserve(email, date, time, nameID, teacherID string) error {
 		TeacherID: teacherID,
 		IsDone:    false,
 	}
-	fmt.Println("reserve a class", r)
+	log.Println("reserve a class", r)
 	insertStmt := `INSERT INTO ClassReservation (email,date,time,nameID,teacherID,isDone) VALUES (:email,:date,:time,:nameID,:teacherID,:isDone)`
 	_, err := im.db.NamedExec(insertStmt, r)
 	if err != nil {
-		fmt.Println("db.NamedExec error", err, insertStmt, r)
+		log.Println("db.NamedExec error", err, insertStmt, r)
 		return err
 	}
 	return nil
 }
 
 func (im *impl) reserveDone(id int64) error {
-	fmt.Println("reserve done", id)
+	log.Println("reserve done", id)
 	updateStmt := `UPDATE ClassReservation SET isDone=:isDone WHERE id=:id`
 	_, err := im.db.NamedExec(updateStmt, map[string]interface{}{
 		"isDone": true,
 		"id":     id,
 	})
 	if err != nil {
-		fmt.Println("db.NamedExec error", err, updateStmt)
+		log.Println("db.NamedExec error", err, updateStmt)
 		return err
 	}
 	return nil
@@ -190,7 +195,7 @@ func (im *impl) cancel(email, date, time, nameID, teacherID string) error {
 func (im *impl) getClasses(date string) ([]*class, error) {
 	r, err := initSession()
 	if err != nil {
-		fmt.Println("goquery.NewDocumentFromReader error:", err)
+		log.Println("goquery.NewDocumentFromReader error:", err)
 		return nil, err
 	}
 
@@ -210,7 +215,7 @@ func (im *impl) getClasses(date string) ([]*class, error) {
 	classes := []*class{}
 	dom, err := goquery.NewDocumentFromReader(strings.NewReader(body))
 	if err != nil {
-		fmt.Println("goquery.NewDocumentFromReader error:", err)
+		log.Println("goquery.NewDocumentFromReader error:", err)
 		return nil, err
 	}
 	// get schedule table

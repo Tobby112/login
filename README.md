@@ -1,12 +1,6 @@
 # Schedule
 Get class schedule and reserve class of mindbodyonline
-1. go get -u github.com/go-sql-driver/mysql  
-   go get -u github.com/parnurzeal/gorequest  
-   go get -u github.com/gin-gonic/gin  
-   go get github.com/gin-contrib/cors  
-   go get github.com/PuerkitoBio/goquery  
-   go get github.com/jmoiron/sqlx
-   => should use govendor
+1. govendor sync
 2. set `email`, `password` and `pmtRefNo` in main.go `configenceMap`
 ```
 confidenceMap = map[string]confidence{

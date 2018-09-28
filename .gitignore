@@ -1,0 +1,15 @@
+# govendor
+vendor/*/
+
+# vim
+.*.swp
+.*.swo
+
+# misc
+.DS_Store
+*.pyc
+*.lo
+*.o
+*.jpg
+*.png
+

@@ -1,13 +1,17 @@
 package main
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -16,6 +20,7 @@ import (
 )
 
 const (
+	domain          = "www.fulfilledpromise.site"
 	userAgent       = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/69.0.3497.100 Safari/537.36"
 	mindbody        = "https://clients.mindbodyonline.com"
 	site            = 831
@@ -72,6 +77,10 @@ func main() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		if !userExists(r.Email) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "user not exists"})
+		}
+
 		if err := classService.reserve(r.Email, r.Date, r.Time, r.NameID, r.TeacherID); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -79,7 +88,22 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"success": true})
 	})
 
-	r.Run("0.0.0.0:80")
+	m := autocert.Manager{
+		Prompt:     autocert.AcceptTOS,
+		HostPolicy: autocert.HostWhitelist(domain),
+		Cache:      autocert.DirCache("/tmp/.cache"),
+	}
+
+	go http.ListenAndServe(":http", r)
+	s := &http.Server{
+		Addr: ":https",
+		TLSConfig: &tls.Config{
+			GetCertificate: m.GetCertificate,
+			NextProtos:     []string{"tls-alpn-01", "tls-sni-01", "tls-sni-02", "http-01"},
+		},
+		Handler: r,
+	}
+	log.Fatal(s.ListenAndServeTLS("", ""))
 }
 
 type user struct {
@@ -91,6 +115,11 @@ type user struct {
 type confidence struct {
 	pass     string
 	pmtRefNo string
+}
+
+func userExists(email string) bool {
+	_, ok := confidenceMap[email]
+	return ok
 }
 
 func newUser(email string) (*user, error) {
