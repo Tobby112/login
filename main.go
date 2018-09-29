@@ -94,12 +94,11 @@ func main() {
 		Cache:      autocert.DirCache("/tmp/.cache"),
 	}
 
-	go http.ListenAndServe(":http", r)
+	go http.ListenAndServe(":http", m.HTTPHandler(nil))
 	s := &http.Server{
 		Addr: ":https",
 		TLSConfig: &tls.Config{
 			GetCertificate: m.GetCertificate,
-			NextProtos:     []string{"tls-alpn-01", "tls-sni-01", "tls-sni-02", "http-01"},
 		},
 		Handler: r,
 	}
