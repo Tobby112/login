@@ -79,6 +79,7 @@ func main() {
 		}
 		if !userExists(r.Email) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "user not exists"})
+			return
 		}
 
 		if err := classService.reserve(r.Email, r.Date, r.Time, r.NameID, r.TeacherID); err != nil {
