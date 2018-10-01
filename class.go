@@ -111,7 +111,7 @@ func reserver(im *impl) {
 	ticker := time.NewTicker(2 * time.Second)
 	for range ticker.C {
 		t := time.Now().In(loc)
-		if t.Hour() <= 9 || t.Hour() >= 21 {
+		if t.Hour() < 9 || t.Hour() >= 21 {
 			continue
 		}
 		date := t.AddDate(0, 0, 7).Format(classDateFormat)
