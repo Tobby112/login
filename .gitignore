@@ -13,3 +13,6 @@ vendor/*/
 *.jpg
 *.png
 
+# bin
+schedule
+

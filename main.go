@@ -11,12 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/acme/autocert"
-
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/parnurzeal/gorequest"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 const (
@@ -219,10 +218,10 @@ func printCookies(r *gorequest.SuperAgent) {
 	if !logCookies {
 		return
 	}
-	fmt.Println("==== cookies of", r.Url, "====")
+	log.Println("==== cookies of", r.Url, "====")
 	domain, _ := url.Parse(r.Url)
 	cookies := r.Client.Jar.Cookies(domain)
 	for _, c := range cookies {
-		fmt.Printf("Name:%s Value:%s Expires:%+v MaxAge:%v HttpOnly:%v\n", c.Name, c.Value, c.Expires, c.MaxAge, c.HttpOnly)
+		log.Printf("Name:%s Value:%s Expires:%+v MaxAge:%v HttpOnly:%v\n", c.Name, c.Value, c.Expires, c.MaxAge, c.HttpOnly)
 	}
 }
